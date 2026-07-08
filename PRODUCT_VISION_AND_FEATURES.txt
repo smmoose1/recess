@@ -1,0 +1,205 @@
+RECESS PRODUCT VISION AND FEATURE MODULES
+
+PRODUCT VISION
+
+Recess is five things in one:
+
+1. For parents: Partiful-style social invites plus a Snap Map-style discovery layer to find what is happening near their kids, filtered by brain-development goals.
+
+2. For organizations: A creator platform where schools, nonprofits, companies, venues, and pop-ups publish events, manage RSVPs, and pay to boost visibility in a region.
+
+3. For discovery: Daily ingestion of kid-relevant events from external platforms so the map is full from day one, even before orgs sign up.
+
+4. For community: A three-layer social system with parent friend graphs, persistent communities (school, neighborhood, friend circles), and per-event spaces with chat, attendance, and photo albums.
+
+5. For Recess: Organic relevance (tags, reviews, goals) blended with transparent sponsored placement and security-first user-generated content moderation.
+
+Parents can share short video reviews of activities they have tried, and a calendar drip surfaces one personalized idea at a time so planning feels light, not overwhelming.
+
+
+FEATURE MODULES
+
+1. Social events (Partiful parity)
+
+- Create invite with theme, date/time, location, guest list
+- Auto-suggest brain-development tags; configurable community settings
+- Shareable web link and deep link into native apps
+- RSVP flow: Yes, No, Maybe, plus optional note
+- Web: public invite and RSVP at /e/[slug] with no account required for guests
+
+
+2. Snap Map-style discovery
+
+The Map tab is a primary navigation destination.
+
+Snap Map behavior and Recess equivalent:
+- Full-screen map, minimal chrome: Map fills screen; tag and date filters as floating chips
+- Heat and activity clusters: Pin clusters by density; pulse animation on "happening now"
+- Tap pin to preview card: Bottom sheet with event image, org logo, tags, goal-match badge
+- Friend activity layer: "Friends going" badge on pins (privacy-controlled)
+- Explore stories on map: Phase 4 adds video review thumbnails as map markers
+
+Map filters: When, Tags, Age, Free/Indoor/Outdoor, Goals, Source ("On Recess" vs "Everywhere")
+
+Pin types: native org, external source-branded, claimed external, friends-going indicator
+
+Ranking: native org first, then claimed, then high-relevance external, then generic external
+
+
+3. External event ingestion
+
+Strategy: Scrape everything possible. Use official APIs where they exist to reduce breakage.
+
+Sources: Eventbrite, Yelp, Google, Mommy Poppins, Partiful, Luma, Meetup (Facebook in Phase 2)
+
+Pipeline: Cloud Scheduler daily at 3 AM per metro, then Cloud Run with Playwright and Cheerio, then deduplication (fingerprint, fuzzy match, cross-source merge), then kid relevance filter, then Firestore.
+
+Org claim flow: Orgs claim ingested listings, upgrade to org_public, become eligible for boosts.
+
+
+4. Organization creator platform
+
+Web portal (web/org/): onboard, events CRUD, boost purchase, claim external listings, analytics, feedback dashboard, team, settings
+
+Mobile org tools: context switcher, quick-create, RSVPs, boost purchase, claim events
+
+
+5. Pay-per-boost marketing
+
+Flat fee per event per region per duration.
+
+Packages:
+- Neighborhood: $29 for 5km radius, 7 days
+- City: $79 for 25km radius, 7 days
+- Metro: $149 for 50km radius, 14 days
+
+Ranking uses finalScore = organicScore + boostScore + recencyBonus. organicScore includes tag match, ratings average, RSVP velocity, and age fit. Maximum 2 sponsored pins per viewport. External events can be boosted only after org claim.
+
+
+6. Community (three layers)
+
+Layer 1: Social graph
+- Parent profiles with display name, avatar, bio, neighborhood; default visibility is friends only
+- Friends (symmetric, both accept) and Follow (asymmetric)
+- Activity feeds such as "Sarah saved Story Time at Brooklyn Library" and "James is going to Saturday STEM Fair"
+- Child personal information never appears in feeds; activity is parent-attributed only
+
+Layer 2: Persistent communities
+
+Community types and examples:
+- school: "PS 321 Parents", "Lincoln Elementary PTA"
+- neighborhood: "Park Slope Parents", "Westside LA Families"
+- friend_circle: "Maya's preschool friends", "Soccer team parents"
+- org_followers: Followers of Brooklyn Children's Museum
+
+Features: community feed, pinned events, invite links, join approval for school groups, community chat in Phase 4
+
+Layer 3: Event communities (auto-created)
+
+- Who's going (pre-event): RSVP list with parent avatars; respects community settings
+- Event chat (on RSVP or invite): Group chat; auto-archived 7 days post-event
+- Who went (post-event): Self or host check-in; builds parent reliability score; unlocks rating prompt
+- Day-of album (event day plus or minus 1 day): Shared photos; all uploads moderated before visible
+- Event rating (post-event, 7 days): Star rating plus structured feedback for org; attendance required
+
+Who's going details: parent avatar and first name only; "Friends going" badge on map; tap for list and chat shortcut
+
+Event chat details: Firestore real-time for MVP; system messages; host pin and mute; FCM push; migrate to Stream Chat at scale
+
+Attendance details: 24 hour check-in window post-event
+
+Photo album details: upload window from 1 hour before start to 24 hours after end; multi-photo; gallery in event detail; optional share to community feed
+
+Favorites feed: opt-in shareToFeed per save; community aggregate such as "Popular in Park Slope Parents this week"
+
+
+7. Post-event ratings and org feedback
+
+Parents who attended an event can rate it and leave structured feedback for the hosting org. This turns every event into a learning loop for organizers and a trust signal for other parents.
+
+Rating flow for parents:
+1. Event ends; push notification within 2 hours asking "How was it? Rate this event"
+2. Parent opens rating sheet from event detail for up to 7 days
+3. Overall rating: 1 to 5 stars (required)
+4. Tag accuracy: "Did the activity match the brain-development tags?" 1 to 5 (optional)
+5. What we liked: free text, minimum 20 characters (required)
+6. What we wished was different: free text, minimum 20 characters (required); constructive feedback for org
+7. Quick highlights: optional chips such as "Engaging staff", "Great for age group", "Good value", "Well organized", "Would return"
+8. Visibility: public (default), friends-only, or org-only (private to org, not on public listing)
+9. Submit; contentIngest moderates text; visible once approved
+
+One rating per parent per event. Editable for 48 hours after submission.
+
+Org feedback dashboard (web/org/feedback):
+
+- Event summary: average rating, tag accuracy score, rating count, trend vs org average
+- What parents liked: aggregated themes and individual approved quotes
+- What parents wished was different: grouped constructive feedback, primary value for org improvement
+- Tag accuracy: per-tag accuracy scores to help orgs tag future events better
+- Rating over time: chart per event series and recurring events
+- Export: CSV of anonymized feedback for internal review
+
+Orgs receive weekly digest with top-rated event, lowest-rated event, top feedback theme, and suggested improvement.
+
+Private feedback (org_only visibility): visible only to org admins. Still moderated for abuse.
+
+Public display and discovery impact:
+- Event detail shows average stars and count (example: 4.6 with 23 ratings); tap to read approved public reviews
+- Map bottom sheet shows star rating badge on pins with 5 or more ratings
+- Discovery ranking includes ratings average (weight 0.15) and credibility boost at 10 or more ratings
+- Unified Reviews tab combines written ratings and video reviews
+
+Cross-module integration:
+- Attendance required to prevent ratings from non-attendees
+- External events rateable after attending; feedback routes to org once listing is claimed
+- Calendar drip prefers events with rating 4.0 or higher and tag accuracy 4.0 or higher
+- Boost ROI in org analytics shows rating before vs after boost campaign
+
+
+8. Security-first user-generated content pipeline
+
+All user-generated content (chat, photos, avatars, rating text) passes through contentIngest before becoming visible. Nothing goes live on trust alone.
+
+Content checks:
+- Photos: Cloud Vision SafeSearch; child-face flagging; EXIF strip
+- Chat text: Perspective API toxicity; profanity blocklist; PII auto-redact
+- Rating feedback text: same as chat text; liked and wishedDifferent scanned before publish
+- Avatars: same image pipeline; initials default until approved
+- Display names: profanity filter; impersonation check
+
+Thresholds: auto-approve below 0.3; auto-reject above 0.7; gray zone goes to human review within 24 hours
+
+Quarantine storage pattern: uploads go to quarantine first; approved content moves to public paths; rejected content retained 30 days for appeals
+
+Report, block, ban:
+- Report any message, photo, profile, or event; priority queue for child-safety keywords
+- Block user hides all their content from blocker's feeds, chats, and RSVP lists
+- Ban (admin) disables auth platform-wide
+- Rate limits: 20 messages per hour, 10 photo uploads per event
+
+COPPA and child safety:
+- No child accounts; parent auth required for all community features
+- Child data never in public feeds
+- Child-face detection flags album photos for review
+- Parental control to disable community features account-wide
+
+
+9. Enrichment discovery
+
+- Native, org, and ingested events by tag filters and map
+- Star ratings and review count on listings; filter by rating 4 or higher
+- "Matches [Child]'s goals" badge; save/bookmark; add to calendar drip
+
+
+10. Video reviews
+
+- 30 to 90 second clips; works on native and external events
+- Complements written ratings in unified Reviews tab on event detail
+- Stored in Firebase Storage; thumbnail generation; map markers in Phase 4
+
+
+11. Calendar trickle
+
+- Nightly dailyCalendarDrip job
+- Sources: templates, org events, ingested external events, reviewed events, community favorites
+- External event cards show "Found for you on Mommy Poppins" with outbound link to book on source platform
