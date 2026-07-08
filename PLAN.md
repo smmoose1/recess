@@ -1,6 +1,6 @@
 # Recess — Partiful for Kids with Brain Development Edge
 
-> A two-sided marketplace where parents discover kid-friendly events on a Snap Map-style layer — filtered by brain-development goals — rate events after attending, and build community around shared experiences — while schools, organizations, companies, venues, and pop-ups create, manage, and pay to boost event visibility.
+> A two-sided marketplace where parents discover kid-friendly events on a Snap Map-style layer — filtered by brain-development goals — rate events after attending, and build community around shared experiences — while schools, organizations, companies, venues, and pop-ups create, manage, and pay to boost event visibility. Recess aggregates events from across the web and keeps every piece of user-generated content behind a security-first moderation pipeline. Firebase backs native Swift, Kotlin, and a Next.js web app. Stripe powers pay-per-boost marketing.
 
 ## Product vision
 
