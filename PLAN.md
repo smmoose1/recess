@@ -1,6 +1,6 @@
 # Recess — Partiful for Kids with Brain Development Edge
 
-> A two-sided marketplace where parents discover kid-friendly events on a Snap Map-style layer — filtered by brain-development goals — while schools, organizations, companies, venues, and pop-ups create, manage, and pay to boost event visibility. Recess aggregates events from across the web, builds parent communities around them, and keeps every piece of user-generated content behind a security-first moderation pipeline. Firebase backs native Swift, Kotlin, and a Next.js web app. Stripe powers pay-per-boost marketing.
+> A two-sided marketplace where parents discover kid-friendly events on a Snap Map-style layer — filtered by brain-development goals — rate events after attending, and build community around shared experiences — while schools, organizations, companies, venues, and pop-ups create, manage, and pay to boost event visibility.
 
 ## Product vision
 
@@ -127,7 +127,8 @@ Recess/
 │       ├── contentIngest.ts      # UGC security pipeline
 │       ├── moderateQueue.ts      # admin review actions
 │       ├── onRsvpCreate.ts       # auto-join event chat, system message
-│       └── onEventEnd.ts         # open attendance, close album window
+│       ├── onEventEnd.ts         # open attendance, close album window
+│       └── onRatingWrite.ts      # aggregate ratingsSummary on events + orgs
 ├── shared/
 │   ├── tags.json
 │   ├── orgTypes.json
@@ -135,6 +136,7 @@ Recess/
 │   └── schemas/
 │       ├── community.ts
 │       ├── eventCommunity.ts
+│       ├── eventRating.ts
 │       └── moderation.ts
 ├── web/
 │   ├── app/e/[slug]/
@@ -171,6 +173,7 @@ The web app is critical for Partiful parity: shareable invite URLs (`recess.app/
 | `ingestRuns` | Per-metro ingestion job logs and per-source health metrics |
 | `promotions` | Pay-per-boost campaigns linked to events |
 | `rsvps` | Guest responses (subcollection of `events/{id}`) |
+| `eventRatings` | Post-event parent ratings and structured org feedback (subcollection of `events/{id}`) |
 | `videoReviews` | Short clips linked to events + optional child age context |
 | `calendarIdeas` | Drip suggestions queued per child |
 | `savedEvents` | Bookmarked events with optional social feed sharing |
@@ -240,6 +243,11 @@ The web app is critical for Partiful parity: shareable invite URLs (`recess.app/
     isBoosted: boolean,
     boostId?: string,
     label: "Sponsored",
+  },
+  ratingsSummary?: {
+    average: number,
+    count: number,
+    tagAccuracyAvg?: number,
   },
 }
 ```
@@ -333,6 +341,32 @@ Host can override any setting. UI shows plain-language privacy summary before pu
 }
 ```
 
+### Event ratings document
+
+Subcollection: `events/{eventId}/eventRatings/{uid}` — one rating per parent per event.
+
+```typescript
+{
+  authorId: string,
+  authorDisplayName: string,
+  attendedWithChildAge?: number,
+  overallRating: number,
+  tagAccuracyRating?: number,
+  liked: string,
+  wishedDifferent: string,
+  highlightTags?: TagId[],
+  visibility: "public" | "org_only" | "friends",
+  attendanceVerified: boolean,
+  moderationStatus: "pending" | "approved" | "rejected",
+  createdAt: Timestamp,
+  updatedAt: Timestamp,
+}
+```
+
+**Eligibility:** Parent must have `attendance/{uid}` record or host-confirmed RSVP `yes` within 7 days after `endsAt`. Push notification prompts rating after event ends.
+
+**Aggregates:** `onRatingWrite` Cloud Function recalculates `events.ratingsSummary` and `organizations.ratingsSummary`.
+
 ---
 
 ## Brain development tag system
@@ -404,7 +438,7 @@ The **Map tab** is a primary navigation destination.
 
 ### 4. Organization creator platform
 
-**Web portal (`web/org/`):** onboard, events CRUD, boost purchase, claim external listings, analytics, team, settings
+**Web portal (`web/org/`):** onboard, events CRUD, boost purchase, claim external listings, analytics, feedback dashboard, team, settings
 
 **Mobile org tools:** context switcher, quick-create, RSVPs, boost purchase, claim events
 
@@ -412,7 +446,7 @@ The **Map tab** is a primary navigation destination.
 
 Flat fee per event per region per duration. Packages: Neighborhood ($29/5km/7d), City ($79/25km/7d), Metro ($149/50km/14d).
 
-**Ranking:** `finalScore = organicScore + boostScore + recencyBonus`. Max 2 sponsored pins per viewport. External events boostable only after org claim.
+**Ranking:** `finalScore = organicScore + boostScore + recencyBonus`. `organicScore` includes tag match, `ratingsSummary.average`, RSVP velocity, and age fit. Max 2 sponsored pins per viewport. External events boostable only after org claim.
 
 ### 6. Community (three layers)
 
@@ -472,8 +506,9 @@ Features: community feed, pinned events, invite links, join approval for school 
 |---|---|---|
 | **Who's going** | Pre-event | RSVP list with parent avatars; respects `communitySettings` |
 | **Event chat** | On RSVP/invite | Group chat; auto-archived 7 days post-event |
-| **Who went** | Post-event | Self or host check-in; builds parent reliability score |
+| **Who went** | Post-event | Self or host check-in; builds parent reliability score; unlocks rating prompt |
 | **Day-of album** | Event day ± 1 day | Shared photos; all uploads moderated before visible |
+| **Event rating** | Post-event (7 days) | Star rating + structured feedback for org; attendance required |
 
 **Who's going:** parent avatar + first name only; "Friends going" badge on map; tap for list + chat shortcut
 
@@ -485,7 +520,73 @@ Features: community feed, pinned events, invite links, join approval for school 
 
 **Favorites feed:** opt-in `shareToFeed` per save; community aggregate "Popular in Park Slope Parents this week"
 
-### 7. Security-first UGC pipeline
+### 7. Post-event ratings and org feedback
+
+Parents who attended an event can rate it and leave structured feedback for the hosting org — turning every event into a learning loop for organizers and a trust signal for other parents.
+
+```mermaid
+sequenceDiagram
+    participant Parent
+    participant App
+    participant Attendance as attendance
+    participant Rating as eventRatings
+    participant Ingest as contentIngest CF
+    participant OrgPortal as org analytics
+    participant Discover as rankDiscoveryFeed
+
+    Parent->>Attendance: Self check-in post-event
+    App->>Parent: Push How was it? Rate this event
+    Parent->>Rating: Stars + liked + wishedDifferent
+    Rating->>Ingest: Moderate text fields
+    Ingest-->>Rating: approved
+    Rating->>OrgPortal: Aggregate feedback dashboard
+    Rating->>Discover: Boost organicScore
+```
+
+#### Rating flow (parent)
+
+1. Event ends → push notification within 2h: *"How was Story Time at Brooklyn Library?"*
+2. Parent opens rating sheet (accessible from event detail for 7 days)
+3. **Overall rating** — 1–5 stars (required)
+4. **Tag accuracy** — "Did the activity match the brain-development tags?" (1–5, optional)
+5. **What we liked** — free text, min 20 chars (required)
+6. **What we wished was different** — free text, min 20 chars (required); constructive feedback for org
+7. **Quick highlights** — optional chips: "Engaging staff", "Great for age group", "Good value", "Well organized", "Would return"
+8. **Visibility** — public (default) / friends-only / org-only (private to org, not on public listing)
+9. Submit → `contentIngest` moderates text → visible once approved
+
+One rating per parent per event. Editable for 48h after submission.
+
+#### Org feedback dashboard (`web/org/feedback`)
+
+| View | Contents |
+|---|---|
+| **Event summary** | Average rating, tag accuracy score, rating count, trend vs org average |
+| **What parents liked** | Aggregated themes; individual approved quotes |
+| **What parents wished was different** | Grouped constructive feedback — primary value for org improvement |
+| **Tag accuracy** | Per-tag accuracy scores — helps orgs tag future events better |
+| **Rating over time** | Chart per event series / recurring events |
+| **Export** | CSV of anonymized feedback for internal review |
+
+Orgs receive weekly digest: top-rated event, lowest-rated event, top feedback theme, suggested improvement.
+
+**Private feedback (`visibility: org_only`):** Visible only to org admins. Still moderated for abuse.
+
+#### Public display and discovery impact
+
+- Event detail: average stars + count ("4.6 · 23 ratings"); tap to read approved public reviews
+- Map bottom sheet: star rating badge on pins with 5+ ratings
+- Discovery ranking: `organicScore` includes `ratingsSummary.average` (weight 0.15) and credibility boost at 10+ ratings
+- Unified "Reviews" tab combines written ratings and video reviews
+
+#### Cross-module integration
+
+- **Attendance required** — prevents ratings from non-attendees
+- **External events** — rateable after attending; feedback routes to org once listing is claimed
+- **Calendar drip** — prefers events with rating ≥ 4.0 and tag accuracy ≥ 4.0
+- **Boost ROI** — org analytics shows rating before vs after boost campaign
+
+### 8. Security-first UGC pipeline
 
 All user-generated content (chat, photos, avatars) passes through `contentIngest` before becoming visible. Nothing goes live on trust alone.
 
@@ -519,6 +620,7 @@ sequenceDiagram
 |---|---|
 | **Photos** | Cloud Vision SafeSearch; child-face flagging; EXIF strip |
 | **Chat text** | Perspective API toxicity; profanity blocklist; PII auto-redact |
+| **Rating feedback text** | Same as chat text; `liked` + `wishedDifferent` scanned before publish |
 | **Avatars** | Same image pipeline; initials default until approved |
 | **Display names** | Profanity filter; impersonation check |
 
@@ -545,17 +647,19 @@ storage/
 - Child-face detection flags album photos for review
 - Parental control: disable community features account-wide
 
-### 8. Enrichment discovery
+### 9. Enrichment discovery
 
 - Native + org + ingested events by tag filters and map
+- Star ratings and review count on listings; filter by rating ≥ 4
 - "Matches [Child]'s goals" badge; save/bookmark; add to calendar drip
 
-### 9. Video reviews
+### 10. Video reviews
 
 - 30–90 second clips; works on native AND external events
+- Complements written ratings in unified "Reviews" tab on event detail
 - Stored in Firebase Storage; thumbnail generation; map markers Phase 4
 
-### 10. Calendar trickle
+### 11. Calendar trickle
 
 - Nightly `dailyCalendarDrip`; sources: templates + org events + ingested external + reviewed events + community favorites
 - External cards: "Found for you on Mommy Poppins" with outbound CTA
@@ -594,6 +698,7 @@ storage/
 - `eventMessages`: write by chat participants; read if approved moderation status
 - `eventAlbums`: write by upload-eligible users; read if approved
 - `attendance`: self check-in or host write
+- `eventRatings`: one write per uid per event; attendance or verified RSVP required; public ratings readable on public events; org admins read org_only ratings for their events
 - `communities` + members: join-policy enforced
 - `friendships`, `follows`: participant read/write
 - `moderationQueue`, `reports`: reporter create; admin read/write
@@ -629,9 +734,10 @@ Storage: quarantine write by user; approved paths read by authenticated users; v
 - **Favorites activity feed**; **friends-going map layer**
 - **Photo album** + image moderation pipeline
 - Favorites feed; community web browse
+- **Post-event ratings** + org feedback dashboard (attendance-gated)
 
 ### Phase 4 — Video reviews + community polish
-- Video reviews + map markers
+- Video reviews + map markers; unified Reviews tab with written ratings
 - **Attendance check-in**; org follower communities; community feeds
 - Admin moderation dashboard; Stream Chat migration if needed
 - Gemini tag suggestions; expand ingestion metros
@@ -654,6 +760,9 @@ Storage: quarantine write by user; approved paths read by authenticated users; v
 | Payments | Stripe Checkout + Payment Sheet | Pay-per-boost for orgs |
 | Map UX | Custom annotations on native maps | Snap feel from UX, not custom tiles |
 | Mobile | Native Swift + Kotlin | iOS and Android |
+| Event ratings | Attendance-gated; structured liked/wishedDifferent | Trust signal for parents; actionable feedback loop for orgs |
+| Rating visibility | Configurable public / friends / org-only | Parents control candor; orgs still receive private feedback |
+| Rating moderation | Same `contentIngest` pipeline as chat | Consistent security for all UGC text |
 
 ---
 
@@ -677,6 +786,9 @@ Storage: quarantine write by user; approved paths read by authenticated users; v
 - [ ] Build `contentIngest` CF: Perspective text filter, Vision image scan, quarantine storage, rate limits
 - [ ] Build report, block, ban flows and `moderationQueue` admin review UI
 - [ ] Build day-of photo album with moderation pending states and post-event attendance check-in
+- [ ] Build post-event rating flow: stars, tag accuracy, liked/wishedDifferent, highlight tags, visibility controls
+- [ ] Build `onRatingWrite` CF to aggregate `ratingsSummary` on events and organizations
+- [ ] Build org feedback dashboard: event summaries, liked/wished themes, tag accuracy, weekly digest email
 - [ ] Build persistent communities: create, join, invite, community feed
 - [ ] Build favorites activity feed with opt-in `shareToFeed`
 - [ ] Implement `rankDiscoveryFeed` with organic scoring + sponsored slot cap
@@ -718,3 +830,6 @@ Storage: quarantine write by user; approved paths read by authenticated users; v
 - **Video storage costs** — 90s max; compress on upload
 - **Calendar drip fatigue** — default 3–4 ideas/week; user-configurable cadence
 - **Cloud Run cost** — daily per metro, not continuous; start with 3 metros
+- **Rating gaming** — attendance gate + one rating per parent + moderation; orgs cannot rate own events
+- **Negative feedback retaliation** — org-only visibility option; orgs cannot see rater identity on org_only feedback
+- **Low rating volume early** — show "New" badge instead of stars until 5 ratings; don't penalize new orgs in ranking
