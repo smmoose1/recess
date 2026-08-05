@@ -1,0 +1,6 @@
+{
+  "projects": {
+    "default": "recess-app-nyc",
+    "prod": "recess-app-nyc"
+  }
+}

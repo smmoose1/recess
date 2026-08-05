@@ -1,0 +1,22 @@
+{
+  "name": "recess",
+  "private": true,
+  "workspaces": [
+    "apps/*",
+    "packages/*",
+    "functions"
+  ],
+  "scripts": {
+    "dev": "npm run dev -w @recess/web",
+    "build": "npm run build -w @recess/shared && npm run build -w @recess/web",
+    "seed": "npm run seed -w @recess/web",
+    "functions:build": "npm run build -w @recess/functions",
+    "emulators": "npx -y firebase-tools@latest emulators:start --import=./.emulator-data --export-on-exit",
+    "deploy:rules": "npx -y firebase-tools@latest deploy --only firestore:rules,firestore:indexes",
+    "deploy:functions": "npx -y firebase-tools@latest deploy --only functions",
+    "deploy:hosting": "npx -y firebase-tools@latest deploy --only hosting"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}

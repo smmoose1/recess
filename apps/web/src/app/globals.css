@@ -1,0 +1,93 @@
+@import "tailwindcss";
+
+:root {
+  --recess-sun: #ffd60a;
+  --recess-coral: #ff4d6d;
+  --recess-sky: #4cc9f0;
+  --recess-grass: #7bd389;
+  --recess-ink: #1a1a1a;
+  --recess-cream: #fff8f0;
+  --recess-paper: #ffffff;
+  --recess-shadow: 0 10px 30px rgba(26, 26, 26, 0.08);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  padding: 0;
+  min-height: 100%;
+  color: var(--recess-ink);
+  background:
+    radial-gradient(circle at 12% 10%, rgba(255, 214, 10, 0.35), transparent 40%),
+    radial-gradient(circle at 88% 0%, rgba(76, 201, 240, 0.28), transparent 35%),
+    radial-gradient(circle at 70% 80%, rgba(123, 211, 137, 0.22), transparent 40%),
+    linear-gradient(180deg, #fff8f0 0%, #fff3e0 45%, #ffe8f0 100%);
+  background-attachment: fixed;
+}
+
+body {
+  font-family: var(--font-nunito), system-ui, sans-serif;
+}
+
+h1,
+h2,
+h3,
+.brand {
+  font-family: var(--font-fredoka), var(--font-nunito), system-ui, sans-serif;
+}
+
+@keyframes pop-in {
+  from {
+    opacity: 0;
+    transform: translateY(12px) scale(0.98);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+@keyframes bounce-soft {
+  0%,
+  100% {
+    transform: translateY(0);
+  }
+  50% {
+    transform: translateY(-4px);
+  }
+}
+
+@keyframes slide-up {
+  from {
+    opacity: 0;
+    transform: translateY(40px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.animate-pop {
+  animation: pop-in 0.55s cubic-bezier(0.2, 0.8, 0.2, 1) both;
+}
+
+.animate-bounce-soft {
+  animation: bounce-soft 1.8s ease-in-out infinite;
+}
+
+.animate-slide-up {
+  animation: slide-up 0.35s cubic-bezier(0.2, 0.8, 0.2, 1) both;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .animate-pop,
+  .animate-bounce-soft,
+  .animate-slide-up {
+    animation: none;
+  }
+}

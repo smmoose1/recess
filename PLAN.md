@@ -1,835 +1,593 @@
-# Recess — Partiful for Kids with Brain Development Edge
+# RECESS — Multi-Agent Build Plan (Firebase)
 
-> A two-sided marketplace where parents discover kid-friendly events on a Snap Map-style layer — filtered by brain-development goals — rate events after attending, and build community around shared experiences — while schools, organizations, companies, venues, and pop-ups create, manage, and pay to boost event visibility. Recess aggregates events from across the web and keeps every piece of user-generated content behind a security-first moderation pipeline. Firebase backs native Swift, Kotlin, and a Next.js web app. Stripe powers pay-per-boost marketing.
+> **Luma for kids and their parents.** A vibrant discovery feed of nearby kid events, gated learning surveys, and an admin console that runs the scrapers that keep the feed full.
 
-## Product vision
+---
 
-Recess is five things in one:
+## Product vision (v2 — this plan)
 
-1. **For parents** — Partiful-style social invites + a Snap Map-style discovery layer to find what's happening near their kids, filtered by brain-development goals
-2. **For organizations** — A creator platform where schools, nonprofits, companies, venues, and pop-ups publish events, manage RSVPs, and **pay to boost** visibility in a region
-3. **For discovery** — Daily ingestion of kid-relevant events from external platforms so the map is full from day one, even before orgs sign up
-4. **For community** — A three-layer social system: parent friend graphs, persistent communities (school, neighborhood, friend circles), and per-event spaces with chat, attendance, and photo albums
-5. **For Recess** — Organic relevance (tags, reviews, goals) blended with transparent sponsored placement and security-first UGC moderation
+RECESS is three surfaces:
 
-Parents can **share short video reviews** of activities they've tried, and a **calendar drip** surfaces one personalized idea at a time so planning feels light, not overwhelming.
+1. **Parent web (public)** — A fun, bold event list near you. Filter by location, event type, age group, and business name. Show **10 events**, then require a short survey answer to **Load more**.
+2. **Admin console** — See every event, ratings, clicks, RSVPs. Create survey questions and review responses. Manually trigger scrapers or change how often they run.
+3. **Ingestion cloud jobs** — Daily (and on-demand) pullers for Mommy Poppins, Eventbrite, Luma, Partiful, and more. Normalize into Firestore. Deduplicate. Serve through filters.
+
+**Out of scope for this MVP** (parked from the old plan): Snap Map, org boost marketplace, friend graphs, event chat/albums, video reviews, calendar drip, native mobile apps. Revisit after the feed + survey + admin loop works.
+
+---
+
+## Locked decisions (2026-07-26)
+
+| Decision | Choice |
+|---|---|
+| Firebase project | **`recess-app-nyc`** (display name RECESS) — created, billing linked, Firestore `nam5`, web app registered |
+| Console | https://console.firebase.google.com/project/recess-app-nyc/overview |
+| Parent auth | **Anonymous** Firebase Auth (enabled + verified via `accounts:signUp`) |
+| Lead capture | First Load-more survey can collect **name + email + zip** (structured question type `lead_capture`) |
+| Launch metros | **NYC**, **Scarsdale/Bronxville**, **Chappaqua** |
+| Ingestion design | See **[`SCRAPERS.md`](./SCRAPERS.md)** — live-probed; MP + Eventbrite first |
+| Billing account | **Personal** (`01D2CC-0FDF3E-487733`) — confirmed OK for now |
+| Admin logins | Email/password Auth enabled. Seed admins in `admins/{uid}`: `byonedegree@gmail.com` (`wQsA2zBaOIOrBi661EXJEOdmrJs1`), `recessplsyes@gmail.com` (`jwmlu3rIgvPovb8QErW2E4AWU3K2`) |
 
 ```mermaid
 flowchart TB
     subgraph sources [External sources]
-        Eventbrite
-        Yelp
-        GoogleEvents[Google Events]
         MommyPoppins[Mommy Poppins]
-        Partiful
+        Eventbrite
         Luma
+        Partiful
+        Others[Other adapters]
     end
 
-    subgraph community [Community layers]
-        SocialGraph[Social graph friends + follows]
-        PersistentComm[Persistent communities]
-        EventComm[Event chat album attendance]
+    subgraph jobs [Cloud Functions / Cloud Run]
+        Scheduler[Cloud Scheduler daily]
+        ManualTrigger[Admin manual pull]
+        Orchestrator[ingestOrchestrator]
+        Adapters[Source adapters]
+        Normalize[normalize + dedupe]
     end
 
-    subgraph security [Security pipeline]
-        ContentIngest[contentIngest CF]
-        ModQueue[Moderation queue]
-    end
-
-    subgraph consumers [Parent side]
-        ParentApp[Mobile apps]
-        ParentWeb[Web RSVP + discover]
-        SnapMap[Snap-style map tab]
-    end
-
-    subgraph creators [Org side]
-        OrgWeb[Org web portal]
-        OrgMobile[Org mobile tools]
-    end
-
-    subgraph ingest [Ingestion service]
-        Scheduler[Cloud Scheduler daily cron]
-        ScraperSvc[scraper Cloud Run service]
-    end
-
-    subgraph platform [Firebase + Stripe]
+    subgraph data [Firebase]
         Auth[Firebase Auth]
-        Firestore[Cloud Firestore]
+        Firestore[(Cloud Firestore)]
         Storage[Cloud Storage]
-        Functions[Cloud Functions]
-        FCM[FCM Push]
-        Stripe[Stripe Checkout]
+        Hosting[Firebase App Hosting / Hosting]
     end
 
-    Scheduler --> ScraperSvc
-    Eventbrite --> ScraperSvc
-    Yelp --> ScraperSvc
-    GoogleEvents --> ScraperSvc
-    MommyPoppins --> ScraperSvc
-    Partiful --> ScraperSvc
-    Luma --> ScraperSvc
-    ScraperSvc --> Firestore
-    ParentApp --> SnapMap
-    ParentApp --> community
-    community --> ContentIngest
-    ContentIngest --> ModQueue
-    ContentIngest --> Storage
-    ParentApp --> Auth
-    ParentWeb --> Auth
-    OrgWeb --> Firestore
-    OrgWeb --> Stripe
-    OrgMobile --> Firestore
-    OrgMobile --> Stripe
-    Functions --> Firestore
-    Functions --> Storage
-    Functions --> FCM
-    Functions --> Stripe
-    SnapMap --> Firestore
+    subgraph clients [Web apps]
+        ParentUI[Parent discovery UI]
+        AdminUI[Admin console]
+    end
+
+    Scheduler --> Orchestrator
+    ManualTrigger --> Orchestrator
+    Orchestrator --> Adapters
+    sources --> Adapters
+    Adapters --> Normalize
+    Normalize --> Firestore
+    ParentUI --> Hosting
+    AdminUI --> Hosting
+    ParentUI --> Auth
+    AdminUI --> Auth
+    ParentUI --> Firestore
+    AdminUI --> Firestore
+    ParentUI -->|clicks RSVP survey| Firestore
 ```
 
 ---
 
-## User roles and account types
+## Brand & UI direction
 
-| Role | Who | Capabilities |
-|---|---|---|
-| `parent` | Families | Social invites, map browse, reviews, calendar drip, RSVP, community, event chat |
-| `org_member` | Staff at a verified org | Create/edit org events, view analytics, purchase boosts, claim external listings |
-| `org_admin` | Org owner | Manage members, billing, org profile, verification, org community |
-| `guest` | Unauthenticated | Web RSVP, public map browse (read-only) |
+**Name:** RECESS  
+**Vibe:** Playground energy — loud joy, soft safety. Think Luma’s clean invite clarity, but for families: bouncy type, saturated color, big rounded corners, zero corporate beige.
 
-**Account model:** One Firebase Auth user can hold multiple hats — a parent account can also be invited as `org_member` on a school account. Store roles in `users/{uid}.roles: ('parent' | 'org_member')[]` and org membership in `organizations/{orgId}/members/{uid}`.
+| Token | Direction |
+|---|---|
+| Display font | Bold rounded sans (e.g. **Nunito / Fredoka / Rounded** via Google Fonts) — RECESS wordmark is the hero signal |
+| Body font | Soft rounded sans companion |
+| Palette | Sunshine yellow, playground red, sky blue, grass green on a warm off-white with subtle confetti / scribble texture — **not** purple-indigo AI defaults, not cream+terracotta, not broadsheet |
+| Motion | 2–3 intentional motions: logo pop on load, filter chips bounce, load-more survey slide-up |
+| Layout | One job per section. First viewport = **RECESS** + one line + filters + feed. No card clutter in the hero. Event rows can be playful list items, not dense dashboards |
 
-**Community is parent-only:** No child accounts. All social features are parent-to-parent. Child data never appears in public feeds.
+**Brand test:** Remove the nav — the page should still scream RECESS.
 
 ---
 
-## Monorepo structure
+## Firebase stack
+
+| Layer | Choice | Why |
+|---|---|---|
+| App | Next.js (App Router) on **Firebase App Hosting** | SSR-friendly filters, one deploy target for parent + admin |
+| Auth | Firebase Auth | Anonymous or email for parents (RSVP/survey attribution); Google/email for admins |
+| DB | Cloud Firestore | Events, metrics, surveys, ingest runs |
+| Jobs | Cloud Functions (2nd gen) + **Cloud Scheduler**; heavy scrapers on **Cloud Run** if Playwright needed | Daily cron + callable manual trigger from admin |
+| Secrets | Google Secret Manager | API keys, scrape credentials |
+| Analytics (product) | First-party counters in Firestore + optional GA4 | Clicks / RSVPs owned in-app for admin views |
+| Storage | Cloud Storage | Optional event images / org logos later |
+
+**Project:** Use `recess-app-nyc` (already created). Web SDK values live in `.env.example`.
+
+---
+
+## Core user flows
+
+### Parent — discover
+
+1. Land on RECESS. Geolocation (or city picker) sets location filter.
+2. Optional filters: event type, age group, business name (text search).
+3. See **page of 10** upcoming events sorted by soonest / nearest.
+4. Tap event → detail (description, org, age, when/where, outbound link). Increment `clickCount`.
+5. RSVP (interested / going) → write `rsvps` + increment counters.
+6. **Load more** → modal with one active survey question → submit answer → unlock next 10.
+
+### Admin — operate
+
+1. Sign in as `admin`.
+2. Events table: title, source, date, location, rating avg, clicks, RSVPs, status.
+3. Ingestion panel: last run per source, schedule cron expression, **Run now**, pause/resume source.
+4. Surveys: create/edit questions, activate one (or weighted pool), view response aggregates + raw answers.
+
+---
+
+## Data model (Firestore)
+
+### `events/{eventId}`
+
+```typescript
+{
+  title: string
+  organization: string          // business / host name
+  eventType: string             // class | park | museum | party | camp | other
+  ageGroup: { min: number; max: number; label: string } // e.g. "3-5", "All ages"
+  description: string
+  links: { primary: string; tickets?: string; source?: string }
+  phone?: string
+  startsAt: Timestamp
+  endsAt?: Timestamp
+  timezone: string
+  location: {
+    name: string
+    address: string
+    city: string
+    region: string
+    country: string
+    lat: number
+    lng: number
+    geohash: string
+  }
+  source: {
+    platform: "mommy_poppins" | "eventbrite" | "luma" | "partiful" | "manual" | string
+    externalId: string
+    sourceUrl: string
+    lastIngestedAt: Timestamp
+  }
+  fingerprint: string           // dedupe key
+  status: "active" | "hidden" | "ended"
+  metrics: {
+    clickCount: number
+    rsvpCount: number
+    ratingAverage: number
+    ratingCount: number
+  }
+  createdAt: Timestamp
+  updatedAt: Timestamp
+}
+```
+
+**Indexes (composite):**  
+`(status, startsAt)`, `(status, eventType, startsAt)`, `(status, organization, startsAt)`, location queries via geohash prefix + client/server radius filter.
+
+### `rsvps/{rsvpId}` or `events/{eventId}/rsvps/{uid}`
+
+```typescript
+{
+  eventId: string
+  userId: string               // auth uid or anonymous id
+  status: "interested" | "going" | "cancelled"
+  createdAt: Timestamp
+}
+```
+
+### `eventClicks/{clickId}` (optional append-only) + denormalized `metrics.clickCount`
+
+### `ratings/{ratingId}` or `events/{eventId}/ratings/{uid}`
+
+```typescript
+{
+  eventId: string
+  userId: string
+  stars: 1 | 2 | 3 | 4 | 5
+  comment?: string
+  createdAt: Timestamp
+}
+```
+
+### `surveyQuestions/{questionId}`
+
+```typescript
+{
+  prompt: string
+  type: "single_choice" | "multi_choice" | "text" | "scale" | "lead_capture"
+  options?: string[]
+  active: boolean
+  weight: number               // for random pool
+  createdAt: Timestamp
+  createdBy: string
+}
+```
+
+### `surveyResponses/{responseId}`
+
+```typescript
+{
+  questionId: string
+  answer: string | string[] | number
+  userId: string
+  sessionId: string
+  filtersSnapshot?: { location?: string; eventType?: string; ageGroup?: string; businessName?: string }
+  createdAt: Timestamp
+  unlockedPage: number         // which "load more" page this unlocked
+}
+```
+
+### `ingestSources/{sourceId}`
+
+```typescript
+{
+  platform: string
+  enabled: boolean
+  scheduleCron: string         // e.g. "0 7 * * *"
+  metros: string[]             // e.g. ["nyc", "la"]
+  lastRunAt?: Timestamp
+  lastRunStatus?: "success" | "partial" | "failed"
+  config: Record<string, unknown>
+}
+```
+
+### `ingestRuns/{runId}`
+
+```typescript
+{
+  sourceId: string
+  trigger: "schedule" | "manual"
+  startedAt: Timestamp
+  finishedAt?: Timestamp
+  status: "running" | "success" | "partial" | "failed"
+  stats: { fetched: number; upserted: number; skipped: number; errors: number }
+  errorSummary?: string
+}
+```
+
+### `admins/{uid}`
+
+```typescript
+{ role: "admin"; email: string }
+```
+
+---
+
+## Cloud functions & jobs
+
+| Function | Trigger | Responsibility |
+|---|---|---|
+| `ingestOrchestrator` | HTTPS callable (admin) + Pub/Sub from Scheduler | Fan out enabled sources / metros |
+| `ingestMommyPoppins` | Pub/Sub topic | Adapter → normalize → upsert |
+| `ingestEventbrite` | Pub/Sub | Prefer official API; fall back scrape only if needed |
+| `ingestLuma` | Pub/Sub | Adapter |
+| `ingestPartiful` | Pub/Sub | Adapter |
+| `queryEvents` | HTTPS / callable | Filtered page of 10, cursor pagination |
+| `recordClick` | Callable | Auth-aware click + metrics bump |
+| `rsvpEvent` | Callable | Upsert RSVP + metrics |
+| `submitSurveyAndUnlock` | Callable | Validate answer, write response, return next page token |
+| `adminSetSourceSchedule` | Callable | Update `ingestSources` + Scheduler job |
+| `adminTriggerIngest` | Callable | Manual pull now |
+| `aggregateRatings` | Firestore onWrite | Keep `metrics.ratingAverage` |
+
+**Ingestion contract (every adapter returns):**
+
+```typescript
+type NormalizedEvent = {
+  externalId: string
+  platform: string
+  title: string
+  organization: string
+  eventType: string
+  ageGroup: { min: number; max: number; label: string }
+  description: string
+  links: { primary: string; tickets?: string; source?: string }
+  phone?: string
+  startsAt: Date
+  endsAt?: Date
+  timezone: string
+  location: { name: string; address: string; city: string; region: string; country: string; lat: number; lng: number }
+}
+```
+
+**Dedupe:** `fingerprint = hash(normalize(title) + startsAtISO + round(lat,3) + round(lng,3) + platform|cross)`. Cross-source merge prefers richer description / better geo.
+
+**Legal / ops note:** Eventbrite public search API is dead — use discovery HTML JSON per SCRAPERS.md. Prefer stable public JSON where it exists (Luma discover). Scrapers must be respectful (rate limits, robots, ToS). Store `sourceUrl` and never claim ownership of third-party content.
+
+---
+
+## Survey gate (Load more)
+
+```mermaid
+sequenceDiagram
+    participant U as Parent
+    participant UI as Discovery UI
+    participant Auth as Anonymous Auth
+    participant CF as submitSurveyAndUnlock
+    participant FS as Firestore
+
+    U->>Auth: signInAnonymously on first visit
+    U->>UI: View first 10 events
+    U->>UI: Tap Load more
+    UI->>FS: Fetch next active survey question
+    UI->>U: Show question modal
+    U->>UI: Submit answer
+    UI->>CF: submitSurveyAndUnlock
+    CF->>FS: Write surveyResponses and optional users.lead
+    CF-->>UI: nextCursor + next 10 events
+    UI->>U: Append events
+```
+
+Rules:
+- First page is free (no survey). Anonymous auth still runs so clicks/RSVPs/surveys attach to a `uid`.
+- Each additional page requires **one** answered question (from active pool).
+- **Seed question #1 (`lead_capture`):** name, email, zip — unlocks the first Load more. Store on `surveyResponses` and mirror to `users/{uid}.lead`.
+- Later questions: kids' ages, preferred event types, etc.
+- Same session can be rate-limited (e.g. max unlocks/hour) to reduce spam.
+- Admin can rotate questions without redeploying the client.
+
+### `surveyQuestions` type addition
+
+```typescript
+type: "single_choice" | "multi_choice" | "text" | "scale" | "lead_capture"
+// lead_capture client fields: name (required), email (required), zip (required)
+```
+
+---
+
+## Monorepo layout
 
 ```
 Recess/
-├── ingestion/                    # Cloud Run scraper service
+├── PLAN.md
+├── SCRAPERS.md                  # live-probed ingestion architecture
+├── PRODUCT_VISION_AND_FEATURES.txt
+├── apps/
+│   └── web/                      # Next.js — parent + /admin
+│       ├── app/(parent)/
+│       ├── app/admin/
+│       ├── components/
+│       └── lib/firebase/
+├── packages/
+│   └── shared/                   # types, zod schemas, eventType enums
+├── functions/                    # Firebase Cloud Functions
+│   └── src/
+│       ├── ingest/
+│       ├── events/
+│       ├── survey/
+│       └── admin/
+├── ingestion/                    # Optional Cloud Run Playwright workers
 │   ├── Dockerfile
-│   ├── src/
-│   │   ├── adapters/             # Eventbrite, Yelp, Google, etc.
-│   │   ├── normalize.ts
-│   │   ├── dedupe.ts
-│   │   └── kidFilter.ts
-│   └── metros/
-├── firebase/
-│   └── functions/src/
-│       ├── suggestTags.ts
-│       ├── queryEventsNear.ts
-│       ├── rankDiscoveryFeed.ts
-│       ├── stripeWebhook.ts
-│       ├── ingestWebhook.ts
-│       ├── dailyCalendarDrip.ts
-│       ├── contentIngest.ts      # UGC security pipeline
-│       ├── moderateQueue.ts      # admin review actions
-│       ├── onRsvpCreate.ts       # auto-join event chat, system message
-│       ├── onEventEnd.ts         # open attendance, close album window
-│       └── onRatingWrite.ts      # aggregate ratingsSummary on events + orgs
-├── shared/
-│   ├── tags.json
-│   ├── orgTypes.json
-│   ├── boostPackages.json
-│   └── schemas/
-│       ├── community.ts
-│       ├── eventCommunity.ts
-│       ├── eventRating.ts
-│       └── moderation.ts
-├── web/
-│   ├── app/e/[slug]/
-│   ├── app/discover/
-│   ├── app/org/
-│   └── app/community/
-├── ios/Recess/
-│   ├── Features/Map/
-│   ├── Features/Org/
-│   ├── Features/Parent/
-│   └── Features/Community/
-├── android/
-│   ├── feature/map/
-│   ├── feature/org/
-│   ├── feature/parent/
-│   └── feature/community/
-└── PLAN.md
+│   └── src/adapters/
+├── firebase.json
+├── firestore.rules
+├── firestore.indexes.json
+└── storage.rules
 ```
-
-The web app is critical for Partiful parity: shareable invite URLs (`recess.app/e/{slug}`) let guests RSVP without installing the app.
 
 ---
 
-## Core data model (Firestore)
+## Multi-agent plan
 
-| Collection | Purpose |
-|---|---|
-| `users` | Parent profile, roles, social profile, notification prefs |
-| `children` | Child name, DOB/age, interests (subcollection of `users/{uid}`) |
-| `parentGoals` | Development approach weights (subcollection of `users/{uid}`) |
-| `organizations` | Schools, nonprofits, companies, venues, pop-ups |
-| `events` | Social, enrichment, org-public, and external events |
-| `externalEvents` | Staging collection for ingested events before promotion to `events` |
-| `ingestRuns` | Per-metro ingestion job logs and per-source health metrics |
-| `promotions` | Pay-per-boost campaigns linked to events |
-| `rsvps` | Guest responses (subcollection of `events/{id}`) |
-| `eventRatings` | Post-event parent ratings and structured org feedback (subcollection of `events/{id}`) |
-| `videoReviews` | Short clips linked to events + optional child age context |
-| `calendarIdeas` | Drip suggestions queued per child |
-| `savedEvents` | Bookmarked events with optional social feed sharing |
-| `communities` | Persistent groups (school, neighborhood, friend circle, org followers) |
-| `friendships` | Friend requests and symmetric friend relationships |
-| `follows` | Asymmetric follow edges |
-| `eventMessages` | Subcollection: `events/{id}/messages/{msgId}` |
-| `eventAlbums` | Subcollection: `events/{id}/album/{photoId}` |
-| `attendance` | Subcollection: `events/{id}/attendance/{uid}` |
-| `moderationQueue` | Flagged content awaiting human review |
-| `reports` | User-submitted reports |
-| `blocks` | Block list per user |
-
-### Organization types
-
-| `orgType` | Examples |
-|---|---|
-| `school` | PTA events, school fairs, after-school programs |
-| `nonprofit` | Museums, libraries, youth orgs |
-| `company` | Kids' brands, retailers hosting workshops |
-| `venue` | Trampoline parks, play spaces, theaters |
-| `popup` | Farmers market stalls, seasonal activations, mobile experiences |
-
-**Verification (MVP):** Manual admin approval. Public discovery requires `verified`.
-
-### Event document
-
-```typescript
-{
-  type: "social" | "enrichment" | "org_public" | "external",
-  createdBy: {
-    creatorType: "parent" | "organization" | "external",
-    creatorId: string,
-  },
-  orgId?: string,
-  external?: {
-    sourceId: string,
-    sourceEventId: string,
-    sourceUrl: string,
-    sources?: { sourceId: string, sourceUrl: string }[],
-    lastIngestedAt: Timestamp,
-    claimedByOrgId?: string,
-  },
-  communitySettings: {
-    enabled: boolean,
-    whosGoingVisibility: "guests_only" | "friends_of_guests" | "public",
-    chatAccess: "rsvp_yes" | "rsvp_all" | "invited_only",
-    albumUpload: "attendees" | "host_only",
-    albumView: "attendees" | "friends_of_attendees" | "public",
-  },
-  title: string,
-  startsAt: Timestamp,
-  endsAt?: Timestamp,
-  geo: { lat: number, lng: number, geohash: string },
-  location: { name: string, address?: string },
-  description: string,
-  tags: TagId[],
-  tagScores?: Record<TagId, number>,
-  ageRange?: { min: number, max: number },
-  visibility: "private" | "friends" | "public",
-  inviteSlug?: string,
-  childIds?: string[],
-  capacity?: number,
-  isFree: boolean,
-  ticketUrl?: string,
-  promotion?: {
-    isBoosted: boolean,
-    boostId?: string,
-    label: "Sponsored",
-  },
-  ratingsSummary?: {
-    average: number,
-    count: number,
-    tagAccuracyAvg?: number,
-  },
-}
-```
-
-**Default `communitySettings` by event type:**
-
-| Event type | `whosGoingVisibility` | `chatAccess` | Community |
-|---|---|---|---|
-| `social` | `guests_only` | `invited_only` | enabled |
-| `enrichment` | `friends_of_guests` | `rsvp_yes` | enabled |
-| `org_public` | `public` | `rsvp_all` | enabled |
-| `external` | N/A | N/A | disabled |
-
-Host can override any setting. UI shows plain-language privacy summary before publish.
-
-### User profile (extends `users`)
-
-```typescript
-{
-  profile: {
-    displayName: string,
-    avatarUrl?: string,
-    bio?: string,
-    neighborhood?: string,
-    profileVisibility: "public" | "friends" | "private",
-  },
-  social: {
-    friendCount: number,
-    communityCount: number,
-  },
-  safety: {
-    blockedUsers: string[],
-    reportCount: number,
-  },
-}
-```
-
-### Communities document
-
-```typescript
-{
-  type: "school" | "neighborhood" | "friend_circle" | "org_followers",
-  name: string,
-  description: string,
-  coverImageUrl?: string,
-  createdBy: string,
-  orgId?: string,
-  joinPolicy: "open" | "approval" | "invite_only",
-  memberCount: number,
-  metroId?: string,
-  visibility: "public" | "private",
-}
-```
-
-### Event messages document
-
-```typescript
-{
-  authorId: string,
-  authorDisplayName: string,
-  text: string,
-  type: "text" | "system",
-  createdAt: Timestamp,
-  moderationStatus: "pending" | "approved" | "rejected" | "flagged",
-  moderationScore?: number,
-}
-```
-
-### Event album document
-
-```typescript
-{
-  uploadedBy: string,
-  storagePath: string,
-  thumbnailPath: string,
-  caption?: string,
-  uploadedAt: Timestamp,
-  moderationStatus: "pending" | "approved" | "rejected",
-  safetyScores: { adult: number, violence: number, racy: number },
-}
-```
-
-### Saved events (favorites with social layer)
-
-```typescript
-{
-  eventId: string,
-  savedAt: Timestamp,
-  shareToFeed: boolean,
-  childId?: string,              // private — never shown publicly
-}
-```
-
-### Event ratings document
-
-Subcollection: `events/{eventId}/eventRatings/{uid}` — one rating per parent per event.
-
-```typescript
-{
-  authorId: string,
-  authorDisplayName: string,
-  attendedWithChildAge?: number,
-  overallRating: number,
-  tagAccuracyRating?: number,
-  liked: string,
-  wishedDifferent: string,
-  highlightTags?: TagId[],
-  visibility: "public" | "org_only" | "friends",
-  attendanceVerified: boolean,
-  moderationStatus: "pending" | "approved" | "rejected",
-  createdAt: Timestamp,
-  updatedAt: Timestamp,
-}
-```
-
-**Eligibility:** Parent must have `attendance/{uid}` record or host-confirmed RSVP `yes` within 7 days after `endsAt`. Push notification prompts rating after event ends.
-
-**Aggregates:** `onRatingWrite` Cloud Function recalculates `events.ratingsSummary` and `organizations.ratingsSummary`.
-
----
-
-## Brain development tag system
-
-### Tag taxonomy (seed in `shared/tags.json`)
-
-| Tag | Examples |
-|---|---|
-| `stem` | Science museum, coding camp, building blocks |
-| `creative_arts` | Painting, music, drama |
-| `social_emotional` | Playdates, cooperative games, empathy activities |
-| `physical_motor` | Sports, dance, playground, fine-motor crafts |
-| `language_literacy` | Story time, journaling, word games |
-| `nature_outdoors` | Hikes, gardening, park exploration |
-| `sensory` | Sand/water play, textures, calm-down activities |
-| `executive_function` | Puzzles, planning games, structured challenges |
-
-### Parent goal profiles (onboarding quiz)
-
-- **Holistic** — balanced weights across all tags
-- **STEM Explorer** — high `stem` + `executive_function`
-- **Creative Soul** — high `creative_arts` + `sensory`
-- **Social Butterfly** — high `social_emotional` + `physical_motor`
-- **Custom** — slider per tag (0–100)
-
-### Tag suggestion engine
-
-`firebase/functions/src/suggestTags.ts` — used for event creation, external ingestion, and kid relevance filtering.
-
----
-
-## Feature modules
-
-### 1. Social events (Partiful parity)
-
-- Create invite with theme, date/time, location, guest list
-- Auto-suggest brain-dev tags; configurable community settings
-- Shareable web link + deep link into native apps
-- RSVP flow: Yes / No / Maybe + optional note
-- Web: `/e/[slug]` — public invite + RSVP (no account required for guests)
-
-### 2. Snap Map-style discovery
-
-The **Map tab** is a primary navigation destination.
-
-| Snap Map behavior | Recess equivalent |
-|---|---|
-| Full-screen map, minimal chrome | Map fills screen; tag/date filters as floating chips |
-| Heat / activity clusters | Pin clusters by density; pulse on "happening now" |
-| Tap pin → preview card | Bottom sheet: event image, org logo, tags, goal-match badge |
-| Friend activity layer | "Friends going" badge on pins (privacy-controlled) |
-| Explore stories on map | Phase 4: video review thumbnails as map markers |
-
-**Map filters:** When, Tags, Age, Free/Indoor/Outdoor, Goals, Source ("On Recess" vs "Everywhere")
-
-**Pin types:** native org, external source-branded, claimed external, friends-going indicator
-
-**Ranking:** native org > claimed > high-relevance external > generic external
-
-### 3. External event ingestion
-
-**Strategy:** Scrape everything possible. Use official APIs where they exist to reduce breakage.
-
-**Sources:** Eventbrite, Yelp, Google, Mommy Poppins, Partiful, Luma, Meetup (+ Facebook Phase 2)
-
-**Pipeline:** Cloud Scheduler (daily 3 AM per metro) → Cloud Run (Playwright + Cheerio) → dedupe (fingerprint + fuzzy + cross-source merge) → kid relevance filter → Firestore
-
-**Org claim flow:** Orgs claim ingested listings → upgrade to `org_public` → eligible for boosts
-
-### 4. Organization creator platform
-
-**Web portal (`web/org/`):** onboard, events CRUD, boost purchase, claim external listings, analytics, feedback dashboard, team, settings
-
-**Mobile org tools:** context switcher, quick-create, RSVPs, boost purchase, claim events
-
-### 5. Pay-per-boost marketing
-
-Flat fee per event per region per duration. Packages: Neighborhood ($29/5km/7d), City ($79/25km/7d), Metro ($149/50km/14d).
-
-**Ranking:** `finalScore = organicScore + boostScore + recencyBonus`. `organicScore` includes tag match, `ratingsSummary.average`, RSVP velocity, and age fit. Max 2 sponsored pins per viewport. External events boostable only after org claim.
-
-### 6. Community (three layers)
+Work is split into **agents** with clear ownership, inputs, and definition of done. Agents can run in parallel when their dependencies are green.
 
 ```mermaid
-flowchart TB
-    subgraph layer1 [Layer 1 Social graph]
-        ParentProfile[Parent profiles]
-        Friends[Friends / follows]
-        FavFeed[Favorites feed]
-        RsvpFeed[RSVP activity feed]
-    end
-
-    subgraph layer2 [Layer 2 Persistent communities]
-        SchoolGroup[School groups]
-        Neighborhood[Neighborhood circles]
-        FriendCircle[Friend circles]
-        OrgCommunity[Org follower communities]
-    end
-
-    subgraph layer3 [Layer 3 Event communities]
-        RsvpList[Who is going]
-        EventChat[Event group chat]
-        Attendance[Who went]
-        EventAlbum[Day-of photo album]
-    end
-
-    ParentProfile --> Friends
-    Friends --> FavFeed
-    Friends --> RsvpFeed
-    SchoolGroup --> layer3
-    Neighborhood --> layer3
-    FriendCircle --> layer3
-    OrgCommunity --> layer3
+gantt
+    title RECESS multi-agent timeline
+    dateFormat  YYYY-MM-DD
+    section Foundation
+    AgentA_Firebase_Scaffold     :a1, 2026-07-27, 3d
+    AgentB_Shared_Schema         :a2, 2026-07-27, 2d
+    section Parallel build
+    AgentC_Parent_UI             :a3, after a2, 5d
+    AgentD_Admin_UI              :a4, after a2, 5d
+    AgentE_Ingestion             :a5, after a2, 6d
+    AgentF_Survey_API            :a6, after a2, 3d
+    section Integrate
+    AgentG_Wire_Metrics_RSVP     :a7, after a3 a4 a6, 3d
+    AgentH_Design_Polish         :a8, after a3, 3d
+    AgentI_Security_Rules_QA     :a9, after a7 a5, 3d
 ```
 
-#### Layer 1 — Social graph
+### Agent A — Firebase foundation
 
-- **Parent profiles** — display name, avatar, bio, neighborhood; default visibility: `friends`
-- **Friends** (symmetric, both accept) + **Follow** (asymmetric)
-- **Activity feeds** — "Sarah saved Story Time at Brooklyn Library", "James is going to Saturday STEM Fair"
-- Child PII never in feeds; activity is parent-attributed only
+**Owns:** Project wiring, Hosting/App Hosting, Functions bootstrap, Auth, emulator config.
 
-#### Layer 2 — Persistent communities
+**Does:**
+- Confirm/create Firebase project (`recess-dev` / `recess-prod`)
+- `firebase.json`, emulators, App Hosting for Next.js
+- Admin custom claims or `admins/{uid}` bootstrap
+- CI deploy scripts (preview + prod)
 
-| Type | Examples |
-|---|---|
-| `school` | "PS 321 Parents", "Lincoln Elementary PTA" |
-| `neighborhood` | "Park Slope Parents", "Westside LA Families" |
-| `friend_circle` | "Maya's preschool friends", "Soccer team parents" |
-| `org_followers` | Followers of Brooklyn Children's Museum |
+**Done when:** `npx -y firebase-tools@latest emulators:start` runs; empty Next app deploys to a preview URL.
 
-Features: community feed, pinned events, invite links, join approval for school groups, community chat (Phase 4)
-
-#### Layer 3 — Event communities (auto-created)
-
-| Feature | When | Description |
-|---|---|---|
-| **Who's going** | Pre-event | RSVP list with parent avatars; respects `communitySettings` |
-| **Event chat** | On RSVP/invite | Group chat; auto-archived 7 days post-event |
-| **Who went** | Post-event | Self or host check-in; builds parent reliability score; unlocks rating prompt |
-| **Day-of album** | Event day ± 1 day | Shared photos; all uploads moderated before visible |
-| **Event rating** | Post-event (7 days) | Star rating + structured feedback for org; attendance required |
-
-**Who's going:** parent avatar + first name only; "Friends going" badge on map; tap for list + chat shortcut
-
-**Event chat:** Firestore real-time (MVP); system messages; host pin/mute; FCM push; migrate to Stream Chat at scale
-
-**Attendance:** 24h check-in window post-event; `{ checkedInAt, method: "self" | "host" }`
-
-**Photo album:** upload window `startsAt - 1h` to `endsAt + 24h`; multi-photo; gallery in event detail; optional share to community feed
-
-**Favorites feed:** opt-in `shareToFeed` per save; community aggregate "Popular in Park Slope Parents this week"
-
-### 7. Post-event ratings and org feedback
-
-Parents who attended an event can rate it and leave structured feedback for the hosting org — turning every event into a learning loop for organizers and a trust signal for other parents.
-
-```mermaid
-sequenceDiagram
-    participant Parent
-    participant App
-    participant Attendance as attendance
-    participant Rating as eventRatings
-    participant Ingest as contentIngest CF
-    participant OrgPortal as org analytics
-    participant Discover as rankDiscoveryFeed
-
-    Parent->>Attendance: Self check-in post-event
-    App->>Parent: Push How was it? Rate this event
-    Parent->>Rating: Stars + liked + wishedDifferent
-    Rating->>Ingest: Moderate text fields
-    Ingest-->>Rating: approved
-    Rating->>OrgPortal: Aggregate feedback dashboard
-    Rating->>Discover: Boost organicScore
-```
-
-#### Rating flow (parent)
-
-1. Event ends → push notification within 2h: *"How was Story Time at Brooklyn Library?"*
-2. Parent opens rating sheet (accessible from event detail for 7 days)
-3. **Overall rating** — 1–5 stars (required)
-4. **Tag accuracy** — "Did the activity match the brain-development tags?" (1–5, optional)
-5. **What we liked** — free text, min 20 chars (required)
-6. **What we wished was different** — free text, min 20 chars (required); constructive feedback for org
-7. **Quick highlights** — optional chips: "Engaging staff", "Great for age group", "Good value", "Well organized", "Would return"
-8. **Visibility** — public (default) / friends-only / org-only (private to org, not on public listing)
-9. Submit → `contentIngest` moderates text → visible once approved
-
-One rating per parent per event. Editable for 48h after submission.
-
-#### Org feedback dashboard (`web/org/feedback`)
-
-| View | Contents |
-|---|---|
-| **Event summary** | Average rating, tag accuracy score, rating count, trend vs org average |
-| **What parents liked** | Aggregated themes; individual approved quotes |
-| **What parents wished was different** | Grouped constructive feedback — primary value for org improvement |
-| **Tag accuracy** | Per-tag accuracy scores — helps orgs tag future events better |
-| **Rating over time** | Chart per event series / recurring events |
-| **Export** | CSV of anonymized feedback for internal review |
-
-Orgs receive weekly digest: top-rated event, lowest-rated event, top feedback theme, suggested improvement.
-
-**Private feedback (`visibility: org_only`):** Visible only to org admins. Still moderated for abuse.
-
-#### Public display and discovery impact
-
-- Event detail: average stars + count ("4.6 · 23 ratings"); tap to read approved public reviews
-- Map bottom sheet: star rating badge on pins with 5+ ratings
-- Discovery ranking: `organicScore` includes `ratingsSummary.average` (weight 0.15) and credibility boost at 10+ ratings
-- Unified "Reviews" tab combines written ratings and video reviews
-
-#### Cross-module integration
-
-- **Attendance required** — prevents ratings from non-attendees
-- **External events** — rateable after attending; feedback routes to org once listing is claimed
-- **Calendar drip** — prefers events with rating ≥ 4.0 and tag accuracy ≥ 4.0
-- **Boost ROI** — org analytics shows rating before vs after boost campaign
-
-### 8. Security-first UGC pipeline
-
-All user-generated content (chat, photos, avatars) passes through `contentIngest` before becoming visible. Nothing goes live on trust alone.
-
-```mermaid
-sequenceDiagram
-    participant User
-    participant App
-    participant Storage as Firebase Storage
-    participant Ingest as contentIngest CF
-    participant Vision as Cloud Vision SafeSearch
-    participant Perspective as Perspective API
-    participant ModQueue as moderationQueue
-    participant Firestore
-
-    User->>App: Upload photo or send message
-    App->>Storage: Write to quarantine path
-    App->>Ingest: Trigger contentIngest
-    Ingest->>Vision: Scan image safety
-    Ingest->>Perspective: Scan text toxicity
-    alt content safe
-        Ingest->>Firestore: moderationStatus = approved
-        Ingest->>Storage: Move to public path
-    else content flagged
-        Ingest->>ModQueue: Queue for human review
-        Ingest->>Firestore: moderationStatus = pending
-    end
-    App-->>User: Show pending state until approved
-```
-
-| Content type | Checks |
-|---|---|
-| **Photos** | Cloud Vision SafeSearch; child-face flagging; EXIF strip |
-| **Chat text** | Perspective API toxicity; profanity blocklist; PII auto-redact |
-| **Rating feedback text** | Same as chat text; `liked` + `wishedDifferent` scanned before publish |
-| **Avatars** | Same image pipeline; initials default until approved |
-| **Display names** | Profanity filter; impersonation check |
-
-**Thresholds:** auto-approve < 0.3; auto-reject > 0.7; gray zone → human review within 24h
-
-**Quarantine storage:**
-```
-storage/
-├── quarantine/{uid}/{uploadId}     # write-only by user, read by CF only
-├── approved/events/{eventId}/album/{photoId}
-├── approved/avatars/{uid}
-└── rejected/...                    # retained 30 days for appeals
-```
-
-**Report, block, ban:**
-- Report any message, photo, profile, or event → priority queue for child-safety keywords
-- Block user → hides all their content from blocker's feeds, chats, RSVP lists
-- Ban (admin) → disables auth platform-wide
-- Rate limits: 20 messages/hour, 10 photo uploads/event
-
-**COPPA and child safety:**
-- No child accounts; parent auth required for all community features
-- Child data never in public feeds
-- Child-face detection flags album photos for review
-- Parental control: disable community features account-wide
-
-### 9. Enrichment discovery
-
-- Native + org + ingested events by tag filters and map
-- Star ratings and review count on listings; filter by rating ≥ 4
-- "Matches [Child]'s goals" badge; save/bookmark; add to calendar drip
-
-### 10. Video reviews
-
-- 30–90 second clips; works on native AND external events
-- Complements written ratings in unified "Reviews" tab on event detail
-- Stored in Firebase Storage; thumbnail generation; map markers Phase 4
-
-### 11. Calendar trickle
-
-- Nightly `dailyCalendarDrip`; sources: templates + org events + ingested external + reviewed events + community favorites
-- External cards: "Found for you on Mommy Poppins" with outbound CTA
+**Blocks:** Everyone needs project IDs + env template (`.env.example`).
 
 ---
 
-## Platform-specific notes
+### Agent B — Shared schema & rules skeleton
 
-### iOS (`ios/`)
-- SwiftUI + MVVM; MapKit; AVFoundation; Community feature module
-- Stripe Payment Sheet for org boosts
+**Owns:** `packages/shared`, Zod types, Firestore collection contracts, index definitions.
 
-### Android (`android/`)
-- Jetpack Compose; Google Maps SDK; CameraX; Community feature module
-- Stripe Payment Sheet for org boosts
+**Does:**
+- Types for Event, Survey*, Ingest*, RSVP, Rating
+- `firestore.indexes.json` composites
+- Draft `firestore.rules` (public read active events; writes via Functions only for metrics/survey; admin-only for sources/questions)
 
-### Web (`web/`)
-- Next.js 15; org portal; community browse (Phase 3); Stripe Checkout
+**Done when:** Shared package builds; other agents import types without inventing fields.
 
-### Ingestion (`ingestion/`)
-- Node.js + Playwright + Cheerio on Cloud Run; daily per metro
-
-### Shared contracts (`shared/`)
-- Tag taxonomy, org types, boost packages, community/moderation schemas
+**Handoff artifact:** `packages/shared/src/schema.ts`
 
 ---
 
-## Security (Firestore rules)
+### Agent C — Parent discovery UI
 
-- `users`, `children`, `parentGoals`: read/write by owning `uid`
-- `organizations` + members: role-based access
-- `events`: host/org write; visibility-based read; `communitySettings` enforced in rules
-- `externalEvents`, `ingestRuns`: ingestion service account write only
-- `promotions`: Cloud Functions write only (post-Stripe webhook)
-- `rsvps`: own RSVP write; host read all; visibility per `communitySettings.whosGoingVisibility`
-- `eventMessages`: write by chat participants; read if approved moderation status
-- `eventAlbums`: write by upload-eligible users; read if approved
-- `attendance`: self check-in or host write
-- `eventRatings`: one write per uid per event; attendance or verified RSVP required; public ratings readable on public events; org admins read org_only ratings for their events
-- `communities` + members: join-policy enforced
-- `friendships`, `follows`: participant read/write
-- `moderationQueue`, `reports`: reporter create; admin read/write
-- `blocks`: owning user read/write
-- `videoReviews`: authenticated write; public read if event public
-- `calendarIdeas`: parent uid only
+**Owns:** Public RECESS experience — brand, filters, list, detail, load-more gate shell.
 
-Storage: quarantine write by user; approved paths read by authenticated users; videos max 50MB.
+**Does:**
+- Brand system (CSS variables, fonts, motion)
+- Filters: location, event type, age group, business name
+- Event list (10) + empty/loading states
+- Event detail sheet/page
+- Load-more CTA → survey modal UI (wired to Agent F)
+- Responsive desktop + mobile
+
+**Done when:** UI works against emulator seed data; RECESS brand passes the “nav removed” test.
+
+**Does not:** Scraper logic, admin screens.
 
 ---
 
-## Phased delivery
+### Agent D — Admin console
 
-### Phase 1 — Foundation + parent social + community schema
-- Firebase, auth, monorepo scaffold
-- Parent onboarding, child profile, goal quiz
-- Social invites, web RSVP, geohash on events
-- `communitySettings` schema; parent profiles; private favorites
-- `friendships` collection; `externalEvents` + `ingestRuns` schema
+**Owns:** `/admin` — ops dashboard.
 
-### Phase 2 — Organizations + Snap Map + event community core
-- Org platform, verification, Snap Map tab
-- Eventbrite + Yelp ingestion; external pins on map
-- **Who's going** RSVP list with configurable visibility
-- **Event group chat** (Firestore real-time)
-- `contentIngest` text pipeline; report/block flows
-- `queryEventsNear` + basic organic ranking
+**Does:**
+- Auth gate (admin only)
+- Events table with metrics columns
+- Ingestion controls: schedule edit, enable/disable source, Run now, run history
+- Survey question CRUD + response explorer (charts + table)
 
-### Phase 3 — Full ingestion + boosts + community expansion
-- Google, Mommy Poppins, Partiful, Luma adapters; dedupe; org claim
-- Stripe boosts; org analytics; calendar drip
-- **Persistent communities** (school, neighborhood, friend circle)
-- **Favorites activity feed**; **friends-going map layer**
-- **Photo album** + image moderation pipeline
-- Favorites feed; community web browse
-- **Post-event ratings** + org feedback dashboard (attendance-gated)
-
-### Phase 4 — Video reviews + community polish
-- Video reviews + map markers; unified Reviews tab with written ratings
-- **Attendance check-in**; org follower communities; community feeds
-- Admin moderation dashboard; Stream Chat migration if needed
-- Gemini tag suggestions; expand ingestion metros
-- Recurring event templates; partnership API migrations
+**Done when:** Admin can manage questions and trigger a mock ingest against emulators.
 
 ---
 
-## Key technical decisions
+### Agent E — Ingestion pipeline
 
-| Decision | Choice | Rationale |
-|---|---|---|
-| Backend | Firebase | Auth, real-time, storage, push, geo |
-| Community model | Three layers (graph + persistent + event) | Matches full social + event-centric vision |
-| Event privacy | Configurable per event by host | Parents control who's going visibility and chat access |
-| UGC moderation | `contentIngest` gate — quarantine first | Security top priority; nothing live without scan |
-| Image moderation | Cloud Vision SafeSearch + child-face flag | Photos held pending until approved |
-| Text moderation | Perspective API + PII redaction | Chat messages scanned before delivery |
-| Event chat MVP | Firestore real-time | Ship fast; migrate to Stream Chat at 10k DAU |
-| Event ingestion | Cloud Run + Playwright daily scrape | Maximum coverage |
-| Payments | Stripe Checkout + Payment Sheet | Pay-per-boost for orgs |
-| Map UX | Custom annotations on native maps | Snap feel from UX, not custom tiles |
-| Mobile | Native Swift + Kotlin | iOS and Android |
-| Event ratings | Attendance-gated; structured liked/wishedDifferent | Trust signal for parents; actionable feedback loop for orgs |
-| Rating visibility | Configurable public / friends / org-only | Parents control candor; orgs still receive private feedback |
-| Rating moderation | Same `contentIngest` pipeline as chat | Consistent security for all UGC text |
+**Owns:** Adapters + orchestrator + Cloud Run (if needed). **Follow [`SCRAPERS.md`](./SCRAPERS.md) exactly.**
 
----
+**Order of adapters (MVP) — revised after live probes:**
+1. **Mommy Poppins** (Cheerio list + JSON-LD detail; regions `118` NYC, `120` Westchester)
+2. **Eventbrite** (parse `window.__SERVER_DATA__` on `/d/{place}/kids/` — official search API is dead)
+3. **Luma** (`api.luma.com/discover/get-paginated-events` — official Plus API is owner-only)
+4. **Partiful** (`__NEXT_DATA__` on `/explore/nyc` + geo filter + strict kid filter)
+5. Stub manual JSON import for seeding
 
-## Implementation todos
+**Metros:** `nyc`, `scarsdale_bronxville`, `chappaqua` (centers in SCRAPERS.md).
 
-- [ ] Initialize Firebase project, Firestore schema, security rules, and Cloud Functions scaffold
-- [ ] Define tag taxonomy, org types, boost packages, and community/moderation schemas in `shared/`
-- [ ] Scaffold monorepo: `firebase/`, `shared/`, `ingestion/`, `web/`, `ios/`, `android/`
-- [ ] Build parent auth + child profile + goal quiz flow on iOS, Android, and web
-- [ ] Implement event creation with tag suggestion CF, `communitySettings`, Firestore CRUD, web RSVP
-- [ ] Add `organizations`, `promotions`, geohash, role-based auth to Firestore schema + rules
-- [ ] Add `externalEvents`, `ingestRuns`, and `external` creator type to schema + rules
-- [ ] Add `communities`, `friendships`, `follows`, `eventMessages`, `eventAlbums`, `attendance`, `moderationQueue`, `reports`, `blocks` to schema + rules
-- [ ] Build parent profiles, friend request/follow flow, and privacy controls on all platforms
-- [ ] Build Cloud Run ingestion service with adapters for Eventbrite, Yelp, Google, Mommy Poppins, Partiful, Luma
-- [ ] Build deduplication pipeline and kid relevance filter; wire daily Cloud Scheduler cron
-- [ ] Build org onboarding, verification, event CRUD, team management, and claim flow
-- [ ] Implement Snap Map: clustering, filters, external pins, friends-going layer, `queryEventsNear` CF
-- [ ] Build Who's going RSVP list with configurable per-event visibility
-- [ ] Build event group chat with Firestore real-time, system messages, FCM push, auto-archive
-- [ ] Build `contentIngest` CF: Perspective text filter, Vision image scan, quarantine storage, rate limits
-- [ ] Build report, block, ban flows and `moderationQueue` admin review UI
-- [ ] Build day-of photo album with moderation pending states and post-event attendance check-in
-- [ ] Build post-event rating flow: stars, tag accuracy, liked/wishedDifferent, highlight tags, visibility controls
-- [ ] Build `onRatingWrite` CF to aggregate `ratingsSummary` on events and organizations
-- [ ] Build org feedback dashboard: event summaries, liked/wished themes, tag accuracy, weekly digest email
-- [ ] Build persistent communities: create, join, invite, community feed
-- [ ] Build favorites activity feed with opt-in `shareToFeed`
-- [ ] Implement `rankDiscoveryFeed` with organic scoring + sponsored slot cap
-- [ ] Integrate Stripe pay-per-boost (Checkout web, Payment Sheet mobile, webhook CF)
-- [ ] Build org analytics dashboard and ingestion health dashboard
-- [ ] Build `dailyCalendarDrip` Cloud Function, calendar UI, and FCM notifications
-- [ ] Implement video record/upload, thumbnail CF, review playback feed
+**Does:**
+- `ingestOrchestrator` + per-source workers
+- Normalize → fingerprint → upsert + `metroIds[]`
+- `ingestRuns` logging
+- Scheduler jobs per source (configurable; default daily 7am ET)
+- Kid-relevance filter (critical for Luma/Partiful)
+
+**Done when:** Manual trigger pulls MP + Eventbrite into Firestore for all three metros; daily schedule documented; failures visible in `ingestRuns`.
+
+**Risk:** Site HTML changes break scrapers — isolate selectors per adapter; alert on `fetched == 0`.
 
 ---
 
-## Prerequisites before implementation
+### Agent F — Survey + pagination API
 
-1. Create Firebase project (or provide existing project ID)
-2. Create Stripe account and configure webhook endpoint
-3. Apple Developer + Google Play accounts
-4. Google Maps / Mapbox API keys
-5. Domain for web invite links (e.g. `recess.app`)
-6. Google Cloud project with Cloud Run + Cloud Scheduler enabled
-7. Eventbrite / Yelp API keys where available
-8. Google Cloud Vision + Perspective API enabled (UGC moderation)
-9. Startup legal counsel review of aggregation/scraping AND community/COPPA compliance before launch
+**Owns:** Callable functions that enforce the learning loop.
+
+**Does:**
+- `queryEvents` with filters + cursor (page size 10)
+- Active question picker
+- `submitSurveyAndUnlock` (answer required → next page)
+- Session / rate-limit guards
+
+**Done when:** Integration test: page1 free → load more blocked → answer → page2 returned.
 
 ---
 
-## Risks and mitigations
+### Agent G — Engagement metrics
 
-- **Three native codebases = slower iteration** — ship web RSVP + one mobile platform first; shared schema keeps clients in sync
-- **Pay-to-win perception** — label "Sponsored", cap boosted slots, show goal-match score
-- **Org spam / low-quality events** — verification gate; parent reporting
-- **Geo query cost at scale** — geohash bounding box; paginate by viewport
-- **Scraper breakage / legal exposure** — attribution, link-out, robots.txt audit, DMCA takedown, kill switches, counsel review
-- **Low-quality ingested listings** — kid relevance filter + admin queue
-- **COPPA exposure** — no child accounts; minimal child PII; legal review before community launch; parental controls
-- **Chat moderation at scale** — Firestore MVP; Stream Chat migration at 10k DAU
-- **Child faces in photos** — flag-not-block default; community guidelines; fast human review SLA
-- **RSVP stalking / harassment** — block hides all interaction; no home addresses in profiles
-- **Moderation latency** — gray-zone content pending; set user expectation ("usually within an hour")
-- **Album abuse** — upload limits; auto-ban on 3 rejected uploads
-- **Video storage costs** — 90s max; compress on upload
-- **Calendar drip fatigue** — default 3–4 ideas/week; user-configurable cadence
-- **Cloud Run cost** — daily per metro, not continuous; start with 3 metros
-- **Rating gaming** — attendance gate + one rating per parent + moderation; orgs cannot rate own events
-- **Negative feedback retaliation** — org-only visibility option; orgs cannot see rater identity on org_only feedback
-- **Low rating volume early** — show "New" badge instead of stars until 5 ratings; don't penalize new orgs in ranking
+**Owns:** Clicks, RSVPs, ratings aggregation.
+
+**Does:**
+- `recordClick`, `rsvpEvent`, ratings write path
+- Denormalized counters on `events.metrics`
+- Admin reads those counters (no separate warehouse for MVP)
+
+**Done when:** Clicking / RSVPing in parent UI increments numbers visible in admin within seconds.
+
+---
+
+### Agent H — Design polish (RECESS vibe)
+
+**Owns:** Visual QA pass after Agent C’s structure exists.
+
+**Does:**
+- Typography scale, color tokens, illustration/texture
+- Micro-interactions (filter chips, survey sheet, load-more celebration)
+- Accessibility: contrast, focus rings, reduced-motion fallback
+
+**Done when:** Landing + feed feel like a product kids’ parents would screenshot — fun, not cluttered.
+
+---
+
+### Agent I — Security, rules, QA
+
+**Owns:** Hardening before public traffic.
+
+**Does:**
+- Lock Firestore rules (no client writes to metrics/events)
+- Admin IAM verification
+- Abuse tests on survey unlock
+- Seed script + smoke checklist
+- Scraper ToS / rate-limit review notes
+
+**Done when:** Rules tests pass; checklist signed off for launch city.
+
+---
+
+## Agent communication contract
+
+All agents share:
+
+1. **Schema package** from Agent B — never fork field names.
+2. **Env template** from Agent A — `NEXT_PUBLIC_FIREBASE_*`, function regions.
+3. **Emulator seed** — `scripts/seed.ts` with 30 fake events + 3 survey questions so C/D/F can parallelize without live scrapers.
+4. **PR discipline** — one agent ≈ one PR stream; merge foundation (A+B) first.
+
+---
+
+## MVP acceptance criteria
+
+- [ ] Parent can filter events by location, type, age, business name
+- [ ] Exactly 10 events per page; Load more requires survey answer
+- [ ] Survey answers land in Firestore and show in admin
+- [ ] Admin sees clicks, RSVPs, rating aggregates per event
+- [ ] Admin can create/activate survey questions
+- [ ] Admin can change ingest schedule and click **Run now**
+- [ ] At least two external sources ingest successfully into `events`
+- [ ] RECESS UI is bold, rounded, vibrant, brand-first
+- [ ] Deployed on Firebase (dev + prod projects)
+
+---
+
+## Suggested launch slice
+
+**Week 1:** Agents A + B + seed data  
+**Week 2:** Agents C + F + H (parent loop with fake events)  
+**Week 3:** Agents D + G (admin + metrics)  
+**Week 4:** Agent E (real ingestion) + Agent I (security) → soft launch one metro  
+
+---
+
+## Remaining open decisions
+
+1. **Hosting:** Firebase App Hosting (recommended for Next.js) vs Hosting + Cloud Functions SSR?
+
+---
+
+## What this replaces
+
+This document supersedes the previous Partiful + Snap Map + boost marketplace + community plan as the **active build target**. Prior ideas remain useful backlog, not MVP scope.
+
+**Scraper source of truth:** [`SCRAPERS.md`](./SCRAPERS.md)
