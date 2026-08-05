@@ -12,6 +12,7 @@
     "seed": "npm run seed -w @recess/web",
     "functions:build": "npm run build -w @recess/functions",
     "emulators": "npx -y firebase-tools@latest emulators:start --import=./.emulator-data --export-on-exit",
+    "secrets:pull": "bash scripts/pull-secrets.sh",
     "deploy:rules": "npx -y firebase-tools@latest deploy --only firestore:rules,firestore:indexes",
     "deploy:functions": "npx -y firebase-tools@latest deploy --only functions",
     "deploy:hosting": "npx -y firebase-tools@latest deploy --only hosting"
