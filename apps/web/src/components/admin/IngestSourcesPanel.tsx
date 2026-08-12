@@ -10,7 +10,7 @@ import {
   updateDoc,
 } from "firebase/firestore";
 import { httpsCallable } from "firebase/functions";
-import { ADAPTER_KINDS, detectAdapterFromUrl } from "@recess/shared";
+import { ADAPTER_KINDS, METROS, detectAdapterFromUrl } from "@recess/shared";
 import { getClientDb, getClientFunctions } from "@/lib/firebase/client";
 
 export type IngestSourceRow = {
@@ -286,6 +286,7 @@ export function IngestSourcesPanel({
   const [notes, setNotes] = useState("");
   const [editing, setEditing] = useState<IngestSourceRow | null>(null);
   const [uploading, setUploading] = useState(false);
+  const [showCsvHelp, setShowCsvHelp] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   async function trigger(sourceId: string) {
@@ -553,13 +554,40 @@ export function IngestSourcesPanel({
             Columns: {CSV_COLUMNS.join(", ")}. Duplicate URLs are skipped.
           </p>
         </div>
-        <div className="flex flex-wrap gap-2">
+        <div className="flex flex-wrap items-center gap-2">
           <button
             type="button"
             onClick={downloadCsvTemplate}
             className="rounded-full border-2 border-black/10 bg-white px-4 py-2 text-sm font-extrabold"
           >
             Download CSV template
+          </button>
+          <button
+            type="button"
+            aria-label="CSV column help"
+            aria-expanded={showCsvHelp}
+            onClick={() => setShowCsvHelp((v) => !v)}
+            className={`inline-flex h-9 w-9 items-center justify-center rounded-full border-2 transition ${
+              showCsvHelp
+                ? "border-black bg-black text-white"
+                : "border-black/10 bg-white text-black/70 hover:border-black/25"
+            }`}
+            title="What each CSV column means"
+          >
+            <svg
+              viewBox="0 0 24 24"
+              aria-hidden
+              className="h-5 w-5"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2.2"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            >
+              <circle cx="12" cy="12" r="9" />
+              <path d="M12 11v6" />
+              <path d="M12 8h.01" />
+            </svg>
           </button>
           <button
             type="button"
@@ -580,6 +608,102 @@ export function IngestSourcesPanel({
             }}
           />
         </div>
+
+        {showCsvHelp ? (
+          <div className="rounded-2xl border border-black/10 bg-white p-4 text-sm">
+            <div className="flex items-start justify-between gap-3">
+              <p className="font-extrabold">CSV columns</p>
+              <button
+                type="button"
+                onClick={() => setShowCsvHelp(false)}
+                className="text-xs font-bold text-black/45 hover:text-black"
+              >
+                Close
+              </button>
+            </div>
+            <dl className="mt-3 space-y-3 font-semibold text-black/70">
+              <div>
+                <dt className="font-extrabold text-black">name</dt>
+                <dd>Display name on admin chips and scraper logs.</dd>
+              </div>
+              <div>
+                <dt className="font-extrabold text-black">url</dt>
+                <dd>Public listing / calendar URL to scrape (must be a valid URL).</dd>
+              </div>
+              <div>
+                <dt className="font-extrabold text-black">adapter</dt>
+                <dd>
+                  Which scraper to use. Options:{" "}
+                  <span className="font-bold text-black">
+                    {ADAPTER_KINDS.join(", ")}
+                  </span>
+                  .
+                  <ul className="mt-1 list-disc space-y-0.5 pl-5">
+                    <li>
+                      <span className="font-bold text-black">auto</span> —
+                      detect from the URL host
+                    </li>
+                    <li>
+                      <span className="font-bold text-black">mommy_poppins</span>{" "}
+                      / <span className="font-bold text-black">eventbrite</span>{" "}
+                      / <span className="font-bold text-black">luma</span> /{" "}
+                      <span className="font-bold text-black">partiful</span> —
+                      platform-specific
+                    </li>
+                    <li>
+                      <span className="font-bold text-black">generic</span> —
+                      JSON-LD catch-all for unknown sites
+                    </li>
+                  </ul>
+                </dd>
+              </div>
+              <div>
+                <dt className="font-extrabold text-black">days</dt>
+                <dd>
+                  How many days ahead to walk for day-based calendars (mainly
+                  Mommy Poppins). Number from{" "}
+                  <span className="font-bold text-black">1–60</span>. Default{" "}
+                  <span className="font-bold text-black">30</span>.
+                </dd>
+              </div>
+              <div>
+                <dt className="font-extrabold text-black">maxDetails</dt>
+                <dd>
+                  Max detail pages to enrich per run (rest use list data).
+                  Number from <span className="font-bold text-black">0–500</span>
+                  . Default <span className="font-bold text-black">120</span>.
+                </dd>
+              </div>
+              <div>
+                <dt className="font-extrabold text-black">notes</dt>
+                <dd>Optional free-text note for admins.</dd>
+              </div>
+              <div>
+                <dt className="font-extrabold text-black">enabled</dt>
+                <dd>
+                  Whether the source runs with “Run all enabled”. Options:{" "}
+                  <span className="font-bold text-black">
+                    true, false, 1, 0, yes, no, on, off
+                  </span>
+                  . Default <span className="font-bold text-black">true</span>.
+                </dd>
+              </div>
+              <div>
+                <dt className="font-extrabold text-black">metroIds</dt>
+                <dd>
+                  Optional metro tags, separated by{" "}
+                  <span className="font-bold text-black">;</span> or{" "}
+                  <span className="font-bold text-black">|</span> or commas.
+                  Known IDs:{" "}
+                  <span className="font-bold text-black">
+                    {METROS.map((m) => m.id).join(", ")}
+                  </span>
+                  .
+                </dd>
+              </div>
+            </dl>
+          </div>
+        ) : null}
       </div>
 
       {editing ? (
